@@ -1,0 +1,68 @@
+<!DOCTYPE HTML><html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>Gelbe Energie GmbH - PV Monitoring</title>
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.2/css/all.css" integrity="sha384-fnmOCqbTlWIlj8LyTjo7mOUStjsKC4pOpQbqyi7RrhN7udi9RwhKkMHpvLbHG9Sr" crossorigin="anonymous">
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      text-align: center;
+    }
+    header {
+      margin: 0;
+      padding-top: 5vh;
+      padding-bottom: 5vh;
+      overflow: hidden;
+      /*background-image: url(winter);
+      background-size: cover;*/
+      color: white;
+    }
+    h2 {
+      font-size: 2.0rem;
+    }
+    p { font-size: 1.2rem; }
+    .units { font-size: 1.2rem; }
+    .readings { font-size: 2.0rem; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Gelbe Energie GmbH - PV Monitoring</h1>
+  <p><strong>Meisterprojekt von Stefan Siewert</strong></p>
+  <p><strong>Last received packet:<br/><span id="timestamp">%TIMESTAMP%</span></strong></p>
+  <p>LoRa RSSI: <span id="rssi">%RSSI%</span></p>
+  <p>
+    <i class="fas fa-bolt" style="color:#000000;"></i> Volt: <span id="voltage" class="readings">%VOLT%</span>
+    <sup>V</sup>
+  </p>
+  <p>
+    <i class="fas fa-solar-panel" style="color:#000000;"></i> Ampere: <span id="current" class="readings">%AMPERE%</span>
+    <sup>A</sup>
+  </p>
+  <p>
+    <i class="fas fa-thermometer-half" style="color:#000000;"></i> Temperature: <span id="temperature" class="readings">%TEMPERATURE%</span>
+    <sup>&deg;C</sup>
+  </p>
+</main>
+<script>
+setInterval(updateValues, 10000, "voltage");
+setInterval(updateValues, 10000, "current");
+setInterval(updateValues, 10000, "temperature");
+setInterval(updateValues, 10000, "rssi");
+setInterval(updateValues, 10000, "timestamp");
+
+function updateValues(value) {
+  var xhttp = new XMLHttpRequest();
+  xhttp.onreadystatechange = function() {
+    if (this.readyState == 4 && this.status == 200) {
+      document.getElementById(value).innerHTML = this.responseText;
+    }
+  };
+  xhttp.open("GET", "/" + value, true);
+  xhttp.send();
+}
+</script>
+</body>
+</html>
