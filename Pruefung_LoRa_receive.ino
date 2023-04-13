@@ -46,10 +46,10 @@
 #define SCREEN_ADDRESS 0x3D //See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
 
 // Replace with your network credentials
-//const char* ssid     = "PHX";
-//const char* password = "tewre5frvmbrr";
-const char* ssid     = "nuestra casa de amor";
-const char* password = "RGMXQo@jKvYKHqc#p2K7";
+//const char* ssid     = "XXX";
+//const char* password = "XXX";
+const char* ssid     = "XXX";
+const char* password = "XXX";
 
 // Define NTP Client to get time
 WiFiUDP ntpUDP;
@@ -133,7 +133,7 @@ void startLoRA(){
   // Change sync word (0X58) to match the receiver
   // The sync word assures you don't get LoRa messages from other LoRa transceivers
   // ranges from 0-0xFF
-  LoRa.setSyncWord(0X58);
+  LoRa.setSyncWord(XXX);
 
   while (!LoRa.begin(BAND) && counter < 10) {
     Serial.print(".");
