@@ -1,7 +1,7 @@
 /*
-  Meisterprüfung LoRa PV Monitoring, Dieser Code wertet Daten aus, die die PCB bescahltung zu verfügung stellt, 
-  Die Daten werden auf einem OLED ausgegeben und via LORA 868MHz gesendet, 
-  V2.0, designed by Stefan Siewert
+Meisterprüfung LoRa PV Monitoring, dieser Code wertet Daten aus, die die PCB Beschaltung zur Verfügung stellt, 
+Die Daten werden auf einem OLED ausgegeben und via LORA 868MHz gesendet, 
+V2.0, designed by Stefan Siewert
 */
 
 //Libraries for LoRa
