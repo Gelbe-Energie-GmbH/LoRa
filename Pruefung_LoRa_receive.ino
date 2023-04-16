@@ -1,8 +1,8 @@
 /*
-  Meisterprüfung LORA Gateway, 
-  Dieser Code empfängt Daten via  LORA 868MHz und wertet diese aus und stellt Sie dem WEB Server zur Verfügung, 
-  Der Code ermöglicht eine Verbindung des ESP32 µController ​mit Wi-Fi,
-  V1.5, designed by Stefan Siewert
+Meisterprüfung LORA Gateway, 
+Dieser Code empfängt Daten via LORA 868MHz und wertet diese aus und stellt Sie dem WEB Server zur Verfügung, 
+Der Code ermöglicht eine Verbindung des ESP32 µController ​mit Wi-Fi,
+V1.5, designed by Stefan Siewert
 */
 
 // Import Wi-Fi library
@@ -133,7 +133,7 @@ void startLoRA(){
   // Change sync word (0X58) to match the receiver
   // The sync word assures you don't get LoRa messages from other LoRa transceivers
   // ranges from 0-0xFF
-  LoRa.setSyncWord(XXX);
+  LoRa.setSyncWord(0X58);
 
   while (!LoRa.begin(BAND) && counter < 10) {
     Serial.print(".");
