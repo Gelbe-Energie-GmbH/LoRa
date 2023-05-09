@@ -1,7 +1,7 @@
 /*
 Meisterprüfung LoRa PV Monitoring, dieser Code wertet Daten aus, die die PCB Beschaltung zur Verfügung stellt, 
 Die Daten werden auf einem OLED ausgegeben und via LORA 868MHz gesendet, 
-V2.0, designed by Stefan Siewert
+V3.0, designed by Stefan Siewert
 */
 
 //Libraries for LoRa
@@ -50,13 +50,16 @@ OneWire oneWire(TEMP_SENSE_PIN); //Setup a oneWire instance to communicate with 
 DallasTemperature sensors(&oneWire);
 
 //Voltage and Current definition and GPIO
-#define INPUT_VOLTAGE_SENSE_PIN 34
-double  R1_VOLTAGE = 47000; //47K
-double  R2_VOLTAGE = 6800; //6.8K
-#define INPUT_CURRENT_SENSE_PIN 35
-#define CURRENT_SCALE  1.5 //R4+R5 / R5 // ( 1K + 2K ) / 2K
-double mVperAmp = 200; //Sensitivity mV/A
-double ACSoffset = 166; //Ideally it should be ( 0.1 x Vcc )
+const int R1 = 470000;   // Resistance of R1 in Ohms
+const int R2 = 56000;    // Resistance of R2 in Ohms
+const int R4 = 1000;    // Resistance of R4 in Ohms
+const int R5 = 2000;   // Resistance of R5 in Ohms
+const int VOLTAGE_PIN = 34;
+const int CURRENT_PIN = 35;
+const float SENSITIVITY = 0.200; // 200mV/A for ACS724LLCTR-20AU-T, 200mV/A for CT415-HSN820DR, 185mV/A for ACS712ELCTR-05B-T
+double ACSoffset = 0.500; // Zero Current offset for ACS724LLCTR-20AU-T, CT415-HSN820DR and ACS712ELCTR-05B-T 500mV
+const int NUM_READINGS = 1000;
+
 double power = 0 ; //Power in Watt
 double energy = 0 ; //Energy in Watt-Hour
 
@@ -121,54 +124,42 @@ void startLoRA() {
     //Increment readingID on every new reading
     readingID++;
     Serial.println("Starting LoRa failed!");
-    display.setCursor(0, 10);
+    display.setCursor(0, 30);
     display.print("Starting LoRa failed!");
     display.display();
   }
 
   Serial.println("LoRa Initialization OK!");
-  display.setCursor(0, 20);
+  display.setCursor(0, 40);
   display.print("LoRa Initializing OK!");
   display.display();
-  delay(2000);
 }
 
-
 //Function to Calculate Solar Panel Voltage
-double return_voltage_value(int pin_no)
-{
-  double tmp = 0;
-  double ADCVoltage = 0;
-  double inputVoltage = 0;
-  double avg = 0;
-  for (int i = 0; i < 150; i++)
-  {
-    tmp = tmp + analogRead(pin_no);
-  }
-  avg = tmp / 150;
-  ADCVoltage = ((avg * 3.3) / (4095)) + 0.138;
-  inputVoltage = ADCVoltage / (R2_VOLTAGE / (R1_VOLTAGE + R2_VOLTAGE)); //formula for calculating voltage in i.e. GND
-  return inputVoltage;
+double getVoltage() {
+  double voltage = 0;
+  double reading = analogRead(VOLTAGE_PIN); // Reference voltage is 3v3 so maximum reading is 3v3 = 4095 in range 0 to 4095
+  if(reading < 1 || reading > 4095) return 0;
+  //return -0.000000000009824 * pow(reading,3) + 0.000000016557283 * pow(reading,2) + 0.000854596860691 * reading + 0.065440348345433;
+  return -0.000000000000016 * pow(reading,4) + 0.000000000118171 * pow(reading,3)- 0.000000301211691 * pow(reading,2)+ 0.001109019271794 * reading + 0.034143524634089;
 }
 
 //Function to Calculate Solar Panel Current
-double return_current_value(int pin_no)
-{
-  double tmp = 0;
-  double avg = 0;
-  double ADCVoltage = 0;
-  double Amps = 0;
-  for (int z = 0; z < 150; z++)
-  {
-    tmp = tmp + analogRead(pin_no);
+double getCurrent() {
+  int sensorValue = 0;
+
+  for (int i = 0; i < NUM_READINGS; i++) {
+    sensorValue += analogRead(CURRENT_PIN);
   }
-  avg = tmp / 150;
-  ADCVoltage = ((avg*3331) / 4095); //Gets you mV
-  Amps = ((ADCVoltage * CURRENT_SCALE - ACSoffset ) / mVperAmp);
-  return Amps;
+
+  double voltage = (sensorValue / (double)NUM_READINGS) * 3.3 / 2047.0;
+  double vout = voltage * (R4 + R5) / R5;
+  double current = abs((vout - ACSoffset) / SENSITIVITY);
+
+  return current;
 }
 
-void readData(){
+void readTemp(){
   //read temperature from DS18B20
   sensors.requestTemperatures(); //get temperatures
   tempC = sensors.getTempCByIndex(0);
@@ -176,8 +167,8 @@ void readData(){
 }
 
 void sendReadings() {
-  double voltage = abs(return_voltage_value(INPUT_VOLTAGE_SENSE_PIN)) ;
-  double current = abs(return_current_value(INPUT_CURRENT_SENSE_PIN)) ;
+  double voltage = getVoltage() * (R1 + R2) / R2;
+  double current = getCurrent();
 
   //Calculate power and energy
   power = current * voltage ; //calculate power in Watt
@@ -255,6 +246,7 @@ void sendReadings() {
   Serial.println(voltage);
   Serial.print("Ampere: ");
   Serial.println(current);
+  Serial.println(analogRead(VOLTAGE_PIN));
 
   readingID++;
 }
@@ -265,11 +257,12 @@ void setup() {
   sensors.begin();
   startOLED();
   startLoRA();
-  
 }
 
 void loop() {
   sendReadings();
-  readData();
+  getVoltage();
+  getCurrent();
+  readTemp();
   delay(10000);
 }
