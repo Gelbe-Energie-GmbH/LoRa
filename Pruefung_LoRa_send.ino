@@ -50,15 +50,15 @@ OneWire oneWire(TEMP_SENSE_PIN); //Setup a oneWire instance to communicate with 
 DallasTemperature sensors(&oneWire);
 
 //Voltage and Current definition and GPIO
-const int R1 = 470000;   // Resistance of R1 in Ohms
-const int R2 = 56000;    // Resistance of R2 in Ohms
-const int R4 = 1000;    // Resistance of R4 in Ohms
-const int R5 = 2000;   // Resistance of R5 in Ohms
+const int R1 = 47000;   // Resistance of R1 in Ohms
+const int R2 = 6800;    // Resistance of R2 in Ohms
+const int R4 = 1000;    // Resistance of R4 in Ohms 1000
+const int R5 = 2000;   // Resistance of R5 in Ohms 2000
 const int VOLTAGE_PIN = 34;
 const int CURRENT_PIN = 35;
-const float SENSITIVITY = 0.200; // 200mV/A for ACS724LLCTR-20AU-T, 200mV/A for CT415-HSN820DR, 185mV/A for ACS712ELCTR-05B-T
+const float SENSITIVITY = 0.185; // 200mV/A for ACS724LLCTR-20AU-T, 200mV/A for CT415-HSN820DR, 185mV/A for ACS712ELCTR-05B-T
 double ACSoffset = 0.500; // Zero Current offset for ACS724LLCTR-20AU-T, CT415-HSN820DR and ACS712ELCTR-05B-T 500mV
-const int NUM_READINGS = 1000;
+double ACSzeropoint = 2.5; // Zero Point of ACS. 2.5 withouth voltage devider, 1.65 with voltage devider
 
 double power = 0 ; //Power in Watt
 double energy = 0 ; //Energy in Watt-Hour
@@ -136,8 +136,7 @@ void startLoRA() {
 }
 
 //Function to Calculate Solar Panel Voltage
-double getVoltage() {
-  double voltage = 0;
+double readVoltage() {
   double reading = analogRead(VOLTAGE_PIN); // Reference voltage is 3v3 so maximum reading is 3v3 = 4095 in range 0 to 4095
   if(reading < 1 || reading > 4095) return 0;
   //return -0.000000000009824 * pow(reading,3) + 0.000000016557283 * pow(reading,2) + 0.000854596860691 * reading + 0.065440348345433;
@@ -145,17 +144,30 @@ double getVoltage() {
 }
 
 //Function to Calculate Solar Panel Current
-double getCurrent() {
-  int sensorValue = 0;
+double readCurrent() {
+  double reading = analogRead(CURRENT_PIN); // Reference voltage is 3v3 so maximum reading is 3v3 = 4095 in range 0 to 4095
+  if(reading < 1 || reading > 4095) return 0;
+  //return -0.000000000009824 * pow(reading,3) + 0.000000016557283 * pow(reading,2) + 0.000854596860691 * reading + 0.065440348345433;
+  return -0.000000000000016 * pow(reading,4) + 0.000000000118171 * pow(reading,3)- 0.000000301211691 * pow(reading,2)+ 0.001109019271794 * reading + 0.034143524634089;
+}
+
+
+double calculateCurrent() {
+  //double vout = readCurrent()  * (R5 + R4) / R5;
+
+  double AVERAGEvoltage = 0.0;
+  const int NUM_READINGS = 1000;
 
   for (int i = 0; i < NUM_READINGS; i++) {
-    sensorValue += analogRead(CURRENT_PIN);
+    double PINvoltage = readCurrent() * (R5 + R4) / R5;
+    AVERAGEvoltage += PINvoltage;
+    delay(1);  // Optional delay to allow for stable readings
   }
 
-  double voltage = (sensorValue / (double)NUM_READINGS) * 3.3 / 2047.0;
-  double vout = voltage * (R4 + R5) / R5;
-  double current = abs((vout - ACSoffset) / SENSITIVITY);
-
+  double Vout = (AVERAGEvoltage / NUM_READINGS) + 0.036;
+  Serial.println(readCurrent(), 4);
+  Serial.println(Vout, 4);
+  double current = (Vout - ACSzeropoint) / SENSITIVITY;
   return current;
 }
 
@@ -167,15 +179,23 @@ void readTemp(){
 }
 
 void sendReadings() {
-  double voltage = getVoltage() * (R1 + R2) / R2;
-  double current = getCurrent();
+  double voltage = readVoltage() * (R1 + R2) / R2;
+  double current = calculateCurrent();
+
+  if (current < 0) {
+    current = 0;
+    display.print(current, 0);
+    display.print(" A");
+  }
 
   //Calculate power and energy
-  power = current * voltage ; //calculate power in Watt
+  power = current * voltage;
   last_time = current_time;
   current_time = millis();
+  if (power != 0) {
   energy = energy +  power * (( current_time - last_time) / 3600000.0) ; //calculate power in Watt-Hour //1 Hour = 60mins x 60 Secs x 1000 Milli Secs
-  
+  }
+
   //Send LoRa packet to receiver
   LoRaMessage = String(readingID) + "/" + String(voltage) + "&" + String(current) + "#" + String(tempC);
   LoRa.beginPacket();
@@ -200,6 +220,7 @@ void sendReadings() {
 
   //Display Current
   display.setCursor(0, 24);
+  
   if (current > 0 && current < 1 )
   {
     display.print(current * 1000, 0);
@@ -238,7 +259,7 @@ void sendReadings() {
   display.clearDisplay();
 
   //Write Data to Serial Monitor
-  Serial.print("Sending packet: ");
+  /*Serial.print("Sending packet: ");
   Serial.println(readingID);
   Serial.print("Temperature: ");
   Serial.println(tempC);
@@ -246,7 +267,7 @@ void sendReadings() {
   Serial.println(voltage);
   Serial.print("Ampere: ");
   Serial.println(current);
-  Serial.println(analogRead(VOLTAGE_PIN));
+  Serial.println(analogRead(VOLTAGE_PIN));*/
 
   readingID++;
 }
@@ -261,8 +282,9 @@ void setup() {
 
 void loop() {
   sendReadings();
-  getVoltage();
-  getCurrent();
+  readVoltage();
+  readCurrent();
+  calculateCurrent();
   readTemp();
   delay(10000);
 }
