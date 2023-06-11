@@ -1,28 +1,24 @@
 /*
-Meisterprüfung LORA Gateway, 
-Dieser Code empfängt Daten via LORA 868MHz und wertet diese aus und stellt Sie dem WEB Server zur Verfügung, 
-Der Code ermöglicht eine Verbindung des ESP32 µController ​mit Wi-Fi,
-V1.5, designed by Stefan Siewert
+Meisterprüfung LoRa PV Monitoring, dieser Code wertet Daten aus, die die PCB Beschaltung zur Verfügung stellt, 
+Die Daten werden auf einem OLED ausgegeben und via LORA 868MHz gesendet, 
+V3.0, designed by Stefan Siewert
 */
-
-// Import Wi-Fi library
-#include <WiFi.h>
-#include "ESPAsyncWebServer.h"
-
-#include <SPIFFS.h>
 
 //Libraries for LoRa
 #include <SPI.h>
 #include <LoRa.h>
 
-// Libraries to get time from NTP Server
-#include <NTPClient.h>
-#include <WiFiUdp.h>
-
 //Libraries for OLED Display
-#include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+
+//Libraries for DS18B20
+#include <DallasTemperature.h>
+#include <OneWire.h>
+#include <Wire.h>
+
+//Libraries for calculation
+#include <math.h>
 
 //define the pins used by the LoRa transceiver module
 #define SCK 18
@@ -45,61 +41,41 @@ V1.5, designed by Stefan Siewert
 #define OLED_RESET -1 //Reset pin # (or -1 if sharing Arduino reset pin)
 #define SCREEN_ADDRESS 0x3D //See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
 
-// Replace with your network credentials
-const char* ssid     = "XXX";
-const char* password = "XXX";
+//DS18B20 definition
+#define TEMP_SENSE_PIN 4
+float tempC=0; //Temperature in Celcius
+//float tempF = 0; //Temperature in Farenheit
+const int oneWireBus = 2; //GPIO for DS18B20
+OneWire oneWire(TEMP_SENSE_PIN); //Setup a oneWire instance to communicate with any OneWire devices
+DallasTemperature sensors(&oneWire);
 
-IPAddress staticIP(192, 168, 1, 15);
-IPAddress gateway(192, 168, 1, 1);
-IPAddress subnet(255, 255, 255, 192);
-IPAddress dns(192, 168, 1, 1);
+//Voltage and Current definition and GPIO
+const int R1 = 47000;   // Resistance of R1 in Ohms
+const int R2 = 6800;    // Resistance of R2 in Ohms
+const int R4 = 1000;    // Resistance of R4 in Ohms 1000
+const int R5 = 2000;   // Resistance of R5 in Ohms 2000
+const int VOLTAGE_PIN = 34;
+const int CURRENT_PIN = 35;
+const float SENSITIVITY = 0.185; // 200mV/A for ACS724LLCTR-20AU-T, 200mV/A for CT415-HSN820DR, 185mV/A for ACS712ELCTR-05B-T
+double ACSoffset = 0.500; // Zero Current offset for ACS724LLCTR-20AU-T, CT415-HSN820DR and ACS712ELCTR-05B-T 500mV
+double ACSzeropoint = 2.5; // Zero Point of ACS. 2.5 withouth voltage devider, 1.65 with voltage devider
 
-// Define NTP Client to get time
-WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP);
+double power = 0 ; //Power in Watt
+double energy = 0 ; //Energy in Watt-Hour
 
-// Variables to save date and time
-String formattedDate;
-String day;
-String hour;
-String timestamp;
+//packet counter
+int readingID = 0;
+int counter = 0;
 
-// Initialize variables to get and save LoRa data
-int rssi;
-String loRaMessage;
-String tempC;
-String current;
-String voltage;
-String readingID;
+String LoRaMessage = "";
 
-// Create AsyncWebServer object on port 80
-AsyncWebServer server(80);
+unsigned long last_time = 0;
+unsigned long current_time = 0;
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-// Replaces placeholder with DHT values
-String processor(const String& var){
-  //Serial.println(var);
-  if(var == "TEMPERATURE"){
-    return tempC;
-  }
-  else if(var == "AMPERE"){
-    return current;
-  }
-  else if(var == "VOLT"){
-    return voltage;
-  }
-  else if(var == "TIMESTAMP"){
-    return timestamp;
-  }
-  else if (var == "RRSI"){
-    return String(rssi);
-  }
-  return String();
-}
-
 //Initialize OLED display
-void startOLED(){
+void startOLED() {
   //reset OLED display via software
   pinMode(OLED_RESET, OUTPUT);
   digitalWrite(OLED_RESET, LOW);
@@ -108,202 +84,207 @@ void startOLED(){
 
   //initialize OLED
   Wire.begin(OLED_SDA, OLED_SCL);
-  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3c, false, false)) { // Address 0x3C for 128x32
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3c, false, false)) { // Address 0x3C for 128x32
     Serial.println(F("SSD1306 allocation failed"));
-    for(;;); // Don't proceed, loop forever
+    for (;;); //Don't proceed, loop forever
   }
   display.clearDisplay();
   display.setTextColor(WHITE);
   display.setTextSize(1);
-  display.setCursor(0,0);
-  display.print("LORA Gateway");
+  display.setCursor(0, 0);
+  display.print("LORA SENDER");
   display.display();
 }
 
 //Initialize LoRa module
-void startLoRA(){
-  int counter;
+void startLoRA() {
   //SPI LoRa pins
-  SPI.begin(SCK, MISO, MOSI, SS);
+  Serial.println("LoRa Initialization started!");
+  display.setCursor(0, 10);
+  display.println("LoRa Initialization started!");
+  SPI.begin(SCK, MISO, MOSI, NSS);
   //setup LoRa transceiver module
-  LoRa.setPins(SS, RST, DIO0);
+  LoRa.setPins(NSS, RST, DIO0);
 
-  //Set LNA Gain for better RX sensitivity, by default AGC (Automatic Gain Control) is used and LNA gain is not used.
-  //Supported values are between 0 and 6. If gain is 0, AGC will be enabled and LNA gain will not be used. 
-  //Else if gain is from 1 to 6, AGC will be disabled and LNA gain will be used.
-  LoRa.setGain(6);
-
-  // set output power
-  LoRa.setTxPower(20);
-
-  // Change sync word (0X58) to match the receiver
-  // The sync word assures you don't get LoRa messages from other LoRa transceivers
-  // ranges from 0-0xFF
+  //Change sync word (0X58) to match the receiver
+  //The sync word assures you don't get LoRa messages from other LoRa transceivers
+  //ranges from 0-0xFF
   LoRa.setSyncWord(0X58);
+
+  // set output power, default 17 dBm
+  LoRa.setTxPower(14);
 
   while (!LoRa.begin(BAND) && counter < 10) {
     Serial.print(".");
     counter++;
     delay(500);
+    Serial.print("Set Freq to: "); Serial.println(BAND);
   }
   if (counter == 10) {
-    // Increment readingID on every new reading
-    Serial.println("Starting LoRa failed!"); 
-    display.setCursor(0,10);
+    //Increment readingID on every new reading
+    readingID++;
+    Serial.println("Starting LoRa failed!");
+    display.setCursor(0, 30);
     display.print("Starting LoRa failed!");
     display.display();
   }
+
   Serial.println("LoRa Initialization OK!");
-  display.setCursor(0,10);
+  display.setCursor(0, 40);
   display.print("LoRa Initializing OK!");
   display.display();
-  delay(2000);
 }
 
-void connectWiFi(){
-  // Connect to Wi-Fi network with SSID and password
-  if (WiFi.config(staticIP, gateway, subnet, dns, dns) == false) {
-    Serial.println("Configuration failed.");
-  }
-
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
-
-  WiFi.begin(ssid, password);
-
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print("Connecting...\n\n");
-  }
-
-  // Print local IP address and start web server
-  Serial.println("");
-  Serial.println("WiFi connected.");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
-  display.setCursor(0,20);
-  display.print("Access web server at: ");
-  display.setCursor(0,30);
-  display.print(WiFi.localIP());
-  display.display();
+//Function to Calculate Solar Panel Voltage
+double readVoltage() {
+  double reading = analogRead(VOLTAGE_PIN); // Reference voltage is 3v3 so maximum reading is 3v3 = 4095 in range 0 to 4095
+  if(reading < 1 || reading > 4095) return 0;
+  //return -0.000000000009824 * pow(reading,3) + 0.000000016557283 * pow(reading,2) + 0.000854596860691 * reading + 0.065440348345433;
+  return -0.000000000000016 * pow(reading,4) + 0.000000000118171 * pow(reading,3)- 0.000000301211691 * pow(reading,2)+ 0.001109019271794 * reading + 0.034143524634089;
 }
 
-// Read LoRa packet and get the sensor readings
-void getLoRaData() {
+//Function to Calculate Solar Panel Current
+double readCurrent() {
+  double reading = analogRead(CURRENT_PIN); // Reference voltage is 3v3 so maximum reading is 3v3 = 4095 in range 0 to 4095
+  if(reading < 1 || reading > 4095) return 0;
+  //return -0.000000000009824 * pow(reading,3) + 0.000000016557283 * pow(reading,2) + 0.000854596860691 * reading + 0.065440348345433;
+  return -0.000000000000016 * pow(reading,4) + 0.000000000118171 * pow(reading,3)- 0.000000301211691 * pow(reading,2)+ 0.001109019271794 * reading + 0.034143524634089;
+}
+
+
+double calculateCurrent() {
+  //double vout = readCurrent()  * (R5 + R4) / R5;
+
+  double AVERAGEvoltage = 0.0;
+  const int NUM_READINGS = 1000;
+
+  for (int i = 0; i < NUM_READINGS; i++) {
+    double PINvoltage = readCurrent() * (R5 + R4) / R5;
+    AVERAGEvoltage += PINvoltage;
+    delay(1);  // Optional delay to allow for stable readings
+  }
+
+  double Vout = (AVERAGEvoltage / NUM_READINGS) + 0.036;
+  Serial.println(readCurrent(), 4);
+  Serial.println(Vout, 4);
+  double current = (Vout - ACSzeropoint) / SENSITIVITY;
+  return current;
+}
+
+void readTemp(){
+  //read temperature from DS18B20
+  sensors.requestTemperatures(); //get temperatures
+  tempC = sensors.getTempCByIndex(0);
+  //tempF = sensors.getTempFByIndex(0); 
+}
+
+void sendReadings() {
+  double voltage = readVoltage() * (R1 + R2) / R2;
+  double current = calculateCurrent();
+
+  if (current < 0) {
+    current = 0;
+    display.print(current, 0);
+    display.print(" A");
+  }
+
+  //Calculate power and energy
+  power = current * voltage;
+  last_time = current_time;
+  current_time = millis();
+  if (power != 0) {
+  energy = energy +  power * (( current_time - last_time) / 3600000.0) ; //calculate power in Watt-Hour //1 Hour = 60mins x 60 Secs x 1000 Milli Secs
+  }
+
+  //Send LoRa packet to receiver
+  LoRaMessage = String(readingID) + "/" + String(voltage) + "&" + String(current) + "#" + String(tempC);
+  LoRa.beginPacket();
+  LoRa.print(LoRaMessage);
+  LoRa.endPacket();
+
+  //Display Data on OLED Display
   display.clearDisplay();
-  display.setCursor(0,0);
-  display.print("Access web server at: ");
-  display.setCursor(0,10);
-  display.print(WiFi.localIP());
-  Serial.print("Lora packet received: ");
-  display.setCursor(0,20);
-  display.print("Lora packet received: ");
-  // Read packet
-  while (LoRa.available()) {
-    String LoRaData = LoRa.readString();
-    // LoRaData format: readingID/voltage&current#temperature
-    // String example: 1/27.43&654#95.34
-    Serial.print(LoRaData);
-    display.setCursor(0,30);
-    display.print(LoRaData);
-    
-    // Get readingID, voltage and current
-    int pos1 = LoRaData.indexOf('/');
-    int pos2 = LoRaData.indexOf('&');
-    int pos3 = LoRaData.indexOf('#');
-    readingID = LoRaData.substring(0, pos1);
-    voltage = LoRaData.substring(pos1 +1, pos2);
-    current = LoRaData.substring(pos2+1, pos3);
-    tempC = LoRaData.substring(pos3+1, LoRaData.length());    
-  }
-  // Get RSSI
-  rssi = LoRa.packetRssi();
-  Serial.print(" with RSSI ");    
-  Serial.println(rssi);
-  display.setCursor(0,40);
-  display.print("with RSSI ");
-  display.setCursor(64,40);
-  display.print(rssi);
-  display.display();
-}
+  display.setCursor(0, 0);
+  display.setTextSize(1);
+  display.print("LoRa packet sent!");
 
-// Function to get date and time from NTPClient
-void getTimeStamp() {
-  while(!timeClient.update()) {
-    timeClient.forceUpdate();
-  }
-  // The formattedDate comes with the following format:
-  // 2018-05-28T16:00:13Z
-  // We need to extract date and time
-  formattedDate = timeClient.getFormattedDate();
-  Serial.println(formattedDate);
+  //Display Temperature
+  display.setCursor(0, 8);
+  display.print(tempC, 1);
+  display.print(" C");
 
-  // Extract date
-  int splitT = formattedDate.indexOf("T");
-  day = formattedDate.substring(0, splitT);
-  Serial.println(day);
-  // Extract time
-  hour = formattedDate.substring(splitT+1, formattedDate.length()-1);
-  Serial.println(hour);
-  timestamp = day + " " + hour;
-  display.setCursor(0,50);
-  display.println(day);
-  display.setCursor(64,50);
-  display.println(hour);
+  //Display Voltage
+  display.setCursor(0, 16);
+  display.print(voltage, 2);
+  display.print(" V");
+
+  //Display Current
+  display.setCursor(0, 24);
+  
+  if (current > 0 && current < 1 )
+  {
+    display.print(current * 1000, 0);
+    display.print(" mA");
+  }
+  else
+  {
+    display.print(current, 2);
+    display.print(" A");
+  }
+
+  //Display Solar Panel Power in Watt
+  display.setCursor(0, 32);
+  display.print(power);
+  display.print(" W");
+
+  //Display Energy Generated by the Solar Panel
+  display.setCursor(0, 40);
+  if ( energy >= 1000 )
+  {
+    display.print(energy / 1000, 3);
+    display.print(" kWh");
+  }
+  else
+  {
+    display.print(energy, 1);
+    display.print(" Wh");
+  }
+
+  //Display Reading ID
+  display.setCursor(0, 48);
+  display.print("Reading ID:");
+  display.setCursor(66, 48);
+  display.print(readingID);
   display.display();
   display.clearDisplay();
+
+  //Write Data to Serial Monitor
+  /*Serial.print("Sending packet: ");
+  Serial.println(readingID);
+  Serial.print("Temperature: ");
+  Serial.println(tempC);
+  Serial.print("Volt: ");
+  Serial.println(voltage);
+  Serial.print("Ampere: ");
+  Serial.println(current);
+  Serial.println(analogRead(VOLTAGE_PIN));*/
+
+  readingID++;
 }
 
-void setup() { 
-  // Initialize Serial Monitor
+void setup() {
+  //initialize Serial Monitor
   Serial.begin(9600);
+  sensors.begin();
   startOLED();
   startLoRA();
-  connectWiFi();
-  
-  if(!SPIFFS.begin()){
-    Serial.println("An Error has occurred while mounting SPIFFS");
-    return;
-  }
-  // Route for root / web page
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(SPIFFS, "/index.html", String(), false, processor);
-  });
-  server.on("/voltage", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/plain", voltage.c_str());
-  });
-  server.on("/current", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/plain", current.c_str());
-  });
-    server.on("/temperature", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/plain", tempC.c_str());
-  });
-  server.on("/timestamp", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/plain", timestamp.c_str());
-  });
-  server.on("/rssi", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/plain", String(rssi).c_str());
-//  });
-//  server.on("/winter", HTTP_GET, [](AsyncWebServerRequest *request){
-//    request->send(SPIFFS, "/winter.jpg", "image/jpg");
-  });
-  // Start server
-  server.begin();
-  
-  // Initialize a NTPClient to get time
-  timeClient.begin();
-  // Set offset time in seconds to adjust for your timezone:
-  // GMT +1 = 3600 (Winterzeit)
-  // GMT +2 = 7200 (Sommerzeit)
-  // GMT 0 = 0
-  timeClient.setTimeOffset(7200);
 }
 
 void loop() {
-  // Check if there are LoRa packets available
-  int packetSize = LoRa.parsePacket();
-  if (packetSize) {
-    getLoRaData();
-    getTimeStamp();
-  }
+  sendReadings();
+  readVoltage();
+  readCurrent();
+  calculateCurrent();
+  readTemp();
+  delay(10000);
 }
