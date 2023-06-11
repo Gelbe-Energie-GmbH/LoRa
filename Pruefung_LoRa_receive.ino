@@ -46,8 +46,8 @@ V1.5, designed by Stefan Siewert
 #define SCREEN_ADDRESS 0x3D //See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
 
 // Replace with your network credentials
-const char* ssid     = "Gelbe-Energie";
-const char* password = "z8bqra!JPexTsGp2tcza.8dwy7M2M";
+const char* ssid     = "XXX";
+const char* password = "XXX";
 
 IPAddress staticIP(192, 168, 1, 15);
 IPAddress gateway(192, 168, 1, 1);
