@@ -46,10 +46,13 @@ V1.5, designed by Stefan Siewert
 #define SCREEN_ADDRESS 0x3D //See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
 
 // Replace with your network credentials
-//const char* ssid     = "XXX";
-//const char* password = "XXX";
-const char* ssid     = "XXX";
-const char* password = "XXX";
+const char* ssid     = "Gelbe-Energie";
+const char* password = "z8bqra!JPexTsGp2tcza.8dwy7M2M";
+
+IPAddress staticIP(192, 168, 1, 15);
+IPAddress gateway(192, 168, 1, 1);
+IPAddress subnet(255, 255, 255, 192);
+IPAddress dns(192, 168, 1, 1);
 
 // Define NTP Client to get time
 WiFiUDP ntpUDP;
@@ -130,6 +133,9 @@ void startLoRA(){
   //Else if gain is from 1 to 6, AGC will be disabled and LNA gain will be used.
   LoRa.setGain(6);
 
+  // set output power
+  LoRa.setTxPower(20);
+
   // Change sync word (0X58) to match the receiver
   // The sync word assures you don't get LoRa messages from other LoRa transceivers
   // ranges from 0-0xFF
@@ -156,13 +162,20 @@ void startLoRA(){
 
 void connectWiFi(){
   // Connect to Wi-Fi network with SSID and password
+  if (WiFi.config(staticIP, gateway, subnet, dns, dns) == false) {
+    Serial.println("Configuration failed.");
+  }
+
   Serial.print("Connecting to ");
   Serial.println(ssid);
+
   WiFi.begin(ssid, password);
+
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
-    Serial.print(".");
+    Serial.print("Connecting...\n\n");
   }
+
   // Print local IP address and start web server
   Serial.println("");
   Serial.println("WiFi connected.");
